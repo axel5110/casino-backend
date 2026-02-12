@@ -1,31 +1,30 @@
-# Casino iPhone 17 Pro Max (App Proxy)
+# Casino iPhone 17 Pro Max — OAuth automatique (1/10000000)
 
-Ce dossier contient un backend Express pour Shopify App Proxy.
-Domaine boutique: jouetmalins.com
-Odds: 1/10000
+Ce backend génère automatiquement un token Admin API via `grant_type=client_credentials`
+(Dev Dashboard: client id / client secret) et le renouvelle automatiquement.
 
-## 1) Créer une Custom App Shopify
-- Active Admin API
-- Récupère:
-  - ADMIN_TOKEN
-  - API_SECRET_KEY (utilisé comme PROXY_SECRET)
+## Variables Render
+- SHOP_MYSHOPIFY_DOMAIN = jouetmalins.myshopify.com
+- CLIENT_ID = client id (Dev Dashboard)
+- CLIENT_SECRET = client secret (shpss_...)
+- PROXY_SECRET = même valeur que CLIENT_SECRET
+- PLAY_COST=1
+- WIN_ODDS=10000000
+- JACKPOT_ADD_CENTS=10
 
-## 2) Configurer App Proxy
-- Prefix: apps
-- Subpath: casino
-- Proxy URL: https://TON_BACKEND/proxy/casino
+## App Proxy (Dev Dashboard)
+- Préfixe : apps
+- Sous-chemin : casino
+- URL du proxy : https://casino-jouetmalins.onrender.com/proxy/casino
 
-## 3) Metafields Shopify à créer
+## Metafields
 Shop:
 - casino.jackpot_cents (number_integer)
 - casino.last_winner (single_line_text_field)
-- casino.iphone_variant_id (single_line_text_field) -> mettre l'ID numérique de variante
+- casino.iphone_variant_id (single_line_text_field) -> 52775374225751
 Customer:
 - casino.credits (number_integer)
 
-## 4) Lancer en local
-npm i
-node index.js
-
-## 5) Déployer
-Vercel/Render/Fly/VM… (mettre les variables d'env du fichier .env.example)
+## Test
+- https://casino-jouetmalins.onrender.com/health -> {"ok": true}
+- Jouer depuis le site (connecté) -> /apps/casino/balance et /apps/casino/play

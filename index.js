@@ -9,19 +9,15 @@ const {
   CLIENT_SECRET,            // Dev Dashboard client secret (shpss_...)
   PROXY_SECRET,             // même valeur que CLIENT_SECRET
   PLAY_COST = "1",
-  WIN_ODDS = "10000",
+  WIN_ODDS = "10000000",
   JACKPOT_ADD_CENTS = "10"
 } = process.env;
 
-// -----------------------------
-// Health + root (Render friendly)
-// -----------------------------
+// -------- Render friendly --------
 app.get("/", (req, res) => res.status(200).send("Casino backend OK ✅"));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
 
-// -----------------------------
-// App Proxy signature verify
-// -----------------------------
+// -------- App Proxy signature verify --------
 function verifyAppProxy(req) {
   const q = { ...req.query };
   const signature = q.signature;
@@ -37,23 +33,19 @@ function verifyAppProxy(req) {
 }
 
 function gid(type, id) { return `gid://shopify/${type}/${id}`; }
-
 function customerIdFromProxy(req) {
   const cid = req.query.logged_in_customer_id;
   if (!cid) return null;
   return gid("Customer", cid);
 }
-
 function sendJson(res, obj) {
   res.set("Content-Type", "application/json");
   res.send(JSON.stringify(obj));
 }
 
-// -----------------------------
-// ✅ AUTO TOKEN (client_credentials)
-// -----------------------------
+// -------- AUTO TOKEN (client_credentials) --------
 let cachedToken = null;
-let tokenExpiresAt = 0; // timestamp ms
+let tokenExpiresAt = 0;
 
 async function fetchAdminToken() {
   if (!SHOP_MYSHOPIFY_DOMAIN || !CLIENT_ID || !CLIENT_SECRET) {
@@ -79,9 +71,9 @@ async function fetchAdminToken() {
 
   const json = await r.json();
   cachedToken = json.access_token;
-  // expires_in en secondes (~86399). On prend une marge de sécurité.
+
   const expiresIn = Number(json.expires_in || 3600);
-  tokenExpiresAt = Date.now() + (expiresIn - 120) * 1000; // -2 min
+  tokenExpiresAt = Date.now() + (expiresIn - 120) * 1000; // -2min safety
   return cachedToken;
 }
 
@@ -90,12 +82,9 @@ async function getAdminToken() {
   return await fetchAdminToken();
 }
 
-// -----------------------------
-// Shopify GraphQL helper
-// -----------------------------
+// -------- Shopify GraphQL --------
 async function shopifyGraphQL(query, variables) {
   const token = await getAdminToken();
-
   const res = await fetch(`https://${SHOP_MYSHOPIFY_DOMAIN}/admin/api/2026-01/graphql.json`, {
     method: "POST",
     headers: {
@@ -110,9 +99,7 @@ async function shopifyGraphQL(query, variables) {
   return json.data;
 }
 
-// -----------------------------
-// Business logic
-// -----------------------------
+// -------- Business logic --------
 async function getCustomerCredits(customerId) {
   const q = `query($id: ID!){
     customer(id:$id){
@@ -186,9 +173,7 @@ async function createDraftOrderFreeIphone(customerId, variantGid) {
   return data.draftOrderCreate.draftOrder.invoiceUrl;
 }
 
-// -----------------------------
-// App Proxy endpoints
-// -----------------------------
+// -------- App Proxy endpoints --------
 app.get("/proxy/casino/balance", async (req, res) => {
   try {
     if (!verifyAppProxy(req)) return res.status(401).send("Invalid signature");
@@ -215,14 +200,16 @@ app.get("/proxy/casino/play", async (req, res) => {
     if (!customerId) return sendJson(res, { ok: false, error: "NOT_LOGGED_IN" });
 
     const cost = parseInt(PLAY_COST, 10) || 1;
-    const odds = parseInt(WIN_ODDS, 10) || 10000;
+    const odds = parseInt(WIN_ODDS, 10) || 10000000;
     const addCents = parseInt(JACKPOT_ADD_CENTS, 10) || 0;
 
     const st = await getShopState();
     if (!st.iphoneVariantId) return sendJson(res, { ok: false, error: "IPHONE_VARIANT_ID_MISSING" });
 
     const credits = await getCustomerCredits(customerId);
-    if (credits < cost) return sendJson(res, { ok: false, error: "NO_CREDITS", credits, jackpotCents: st.jackpot, lastWinner: st.lastWinner });
+    if (credits < cost) {
+      return sendJson(res, { ok: false, error: "NO_CREDITS", credits, jackpotCents: st.jackpot, lastWinner: st.lastWinner });
+    }
 
     await setCustomerCredits(customerId, credits - cost);
 
@@ -247,6 +234,5 @@ app.get("/proxy/casino/play", async (req, res) => {
   }
 });
 
-// Render port
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Casino proxy running on :" + PORT));
