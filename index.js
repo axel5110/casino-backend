@@ -2,6 +2,15 @@ import express from "express";
 import crypto from "crypto";
 
 const app = express();
+// Page simple pour éviter "Not found" quand Shopify ouvre l'app
+app.get("/", (req, res) => {
+  res.status(200).send("Casino backend OK ✅");
+});
+
+// Healthcheck pratique (Render / test)
+app.get("/health", (req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 const {
   SHOP_DOMAIN,
