@@ -1,0 +1,7 @@
+{
+  "name": "casino-proxy",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
