@@ -1,0 +1,3 @@
+Si tu ouvres /webhooks/orders_paid dans le navigateur, tu fais un GET.
+Le webhook Shopify envoie un POST.
+Ce ZIP ajoute un GET qui renvoie "ok" pour vérifier que l'URL est bonne.

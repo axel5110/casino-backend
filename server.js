@@ -174,6 +174,8 @@ try {
     if (!verifyAppProxy(req.query)) return res.status(401).json({ ok: false, error: "bad_signature"
 }
 
+app.get("/webhooks/orders_paid", (req,res)=>res.status(200).send("ok")); 
+
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
   try {
     const h = req.get("X-Shopify-Hmac-Sha256") || "";
@@ -222,5 +224,6 @@ app.post("/proxy/casino/consume", async (req, res) => handleProxyConsume(req, re
 // JSON parsing for non-webhook routes
 app.use(express.json());
 
+app.get("/health", (req,res)=>res.status(200).json({ok:true}));
 app.get("/", (req, res) => res.send("ok"));
 app.listen(PORT, () => console.log("casino-backend on", PORT));
