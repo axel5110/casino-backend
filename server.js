@@ -225,5 +225,5 @@ app.post("/proxy/casino/consume", async (req, res) => handleProxyConsume(req, re
 app.use(express.json());
 
 app.get("/health", (req,res)=>res.status(200).json({ok:true}));
-app.get("/", (req, res) => res.send("ok"));
+app.get("/", (req, res) => res.status(200).send("ok"));
 app.listen(PORT, () => console.log("casino-backend on", PORT));

@@ -1,0 +1,11 @@
+✅ Render - réglages indispensables
+
+Si tu vois "Cannot GET /admin/status" ou si /health ne marche pas :
+1) Type = Web Service (pas Static Site)
+2) Root Directory = casino-backend (si ton repo contient aussi le thème)
+3) Build Command = npm install
+4) Start Command = npm start
+
+Tests :
+- /health
+- /admin/status?shop=jouetmalins.myshopify.com
