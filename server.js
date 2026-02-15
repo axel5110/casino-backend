@@ -11,15 +11,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// === OAuth / App credentials (Dev Dashboard) ===
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const PROXY_SECRET = process.env.PROXY_SECRET || CLIENT_SECRET;
-
-const PLAY_VARIANT_ID = process.env.PLAY_VARIANT_ID || "52772073636183";
+// ===== ENV =====
+const CLIENT_ID = process.env.CLIENT_ID || "";           // Dev Dashboard "ID client"
+const CLIENT_SECRET = process.env.CLIENT_SECRET || "";   // Dev Dashboard "Secret"
+const PROXY_SECRET = process.env.PROXY_SECRET || CLIENT_SECRET; // HMAC (App Proxy + Webhooks)
+const APP_URL = process.env.APP_URL || "";               // https://casino-jouetmalins.onrender.com
+const ALLOWED_SHOP = process.env.ALLOWED_SHOP || "";     // jouetmalins.myshopify.com
 const SCOPES = process.env.SCOPES || "read_customers,write_customers,read_orders,write_orders";
-const APP_URL = process.env.APP_URL; // ex: https://tonservice.onrender.com
-const ALLOWED_SHOP = process.env.ALLOWED_SHOP || ""; // ex: jouetmalins.myshopify.com
+const PLAY_VARIANT_ID = String(process.env.PLAY_VARIANT_ID || "52772073636183");
 
 const TOKENS_FILE = path.join(__dirname, "tokens.json");
 
@@ -38,25 +37,81 @@ function setToken(shop, token) {
   tokens[shop] = token;
   saveTokens(tokens);
 }
+
 function safeEqual(a, b) {
   try { return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); } catch { return false; }
 }
 
-// App Proxy signature verification
+// ===== Health / Debug =====
+app.get("/", (req, res) => res.status(200).send("ok"));
+app.get("/health", (req, res) => res.status(200).json({ ok: true }));
+app.get("/admin/status", (req, res) => {
+  const shop = String(req.query.shop || ALLOWED_SHOP || "");
+  if (!shop) return res.status(400).json({ ok: false, error: "missing_shop" });
+  return res.json({ ok: true, shop, hasToken: !!getToken(shop) });
+});
+
+// ===== OAuth HMAC verify =====
+function verifyOAuthHmac(query) {
+  const provided = String(query.hmac || query.signature || "");
+  if (!provided || !CLIENT_SECRET) return false;
+
+  const { hmac, signature, ...rest } = query;
+  const keys = Object.keys(rest).sort();
+  const message = keys.map(k => `${k}=${Array.isArray(rest[k]) ? rest[k].join(",") : rest[k]}`).join("&");
+  const digest = crypto.createHmac("sha256", CLIENT_SECRET).update(message).digest("hex");
+  return safeEqual(digest, provided);
+}
+
+app.get("/oauth/start", (req, res) => {
+  const shop = String(req.query.shop || "").trim();
+  if (!shop) return res.status(400).send("missing shop");
+  if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
+  if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing env CLIENT_ID/CLIENT_SECRET/APP_URL");
+
+  const state = crypto.randomBytes(16).toString("hex");
+  const redirectUri = `${APP_URL}/oauth/callback`;
+  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${CLIENT_ID}&scope=${encodeURIComponent(SCOPES)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+  return res.redirect(installUrl);
+});
+
+async function handleOAuthCallback(req, res) {
+  try {
+    const shop = String(req.query.shop || "");
+    const code = String(req.query.code || "");
+    if (!shop || !code) return res.status(400).send("missing shop/code");
+    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
+    if (!verifyOAuthHmac(req.query)) return res.status(401).send("bad hmac");
+
+    const tokenResp = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code })
+    });
+    const tokenData = await tokenResp.json();
+    if (!tokenData.access_token) return res.status(500).send("no access_token returned");
+
+    setToken(shop, tokenData.access_token);
+    return res.status(200).send(`✅ OAuth OK. Token saved for ${shop}. Tu peux fermer cette page.`);
+  } catch {
+    return res.status(500).send("oauth failed");
+  }
+}
+
+app.get("/oauth/callback", handleOAuthCallback);
+// Compat si tu as mis /auth/callback dans Shopify
+app.get("/auth/callback", handleOAuthCallback);
+
+// ===== App Proxy signature verify =====
 function verifyAppProxy(query) {
-  const { signature, ...rest } = query;
+  const signature = String(query.signature || "");
   if (!signature || !PROXY_SECRET) return false;
+
+  const { signature: _sig, ...rest } = query;
   const keys = Object.keys(rest).sort();
   const message = keys.map(k => `${k}=${Array.isArray(rest[k]) ? rest[k].join(",") : rest[k]}`).join("");
   const digest = crypto.createHmac("sha256", PROXY_SECRET).update(message).digest("hex");
   return safeEqual(digest, signature);
-}
-
-// Webhook HMAC verification (base64)
-function verifyWebhook(rawBody, hmacHeader) {
-  if (!PROXY_SECRET) return false;
-  const digest = crypto.createHmac("sha256", PROXY_SECRET).update(rawBody).digest("base64");
-  return safeEqual(digest, hmacHeader || "");
 }
 
 async function shopifyGraphQL(shop, accessToken, query, variables) {
@@ -74,130 +129,46 @@ async function shopifyGraphQL(shop, accessToken, query, variables) {
 }
 
 async function getCustomerPlays(shop, accessToken, customerGid) {
-  const q = `query($id:ID!) {
-    customer(id:$id) {
-      metafield(namespace:"casino", key:"plays") { value }
-    }
-  }`;
+  const q = `query($id:ID!) { customer(id:$id) { metafield(namespace:"casino", key:"plays") { value } } }`;
   const d = await shopifyGraphQL(shop, accessToken, q, { id: customerGid });
   const v = d.customer?.metafield?.value;
   return v ? parseInt(v, 10) : 0;
 }
 
 async function setCustomerPlays(shop, accessToken, customerGid, plays) {
-  const m = `mutation($input:CustomerInput!) {
-    customerUpdate(input:$input) {
-      userErrors { field message }
-    }
-  }`;
+  const m = `mutation($input:CustomerInput!) { customerUpdate(input:$input) { userErrors { field message } } }`;
   const input = {
     id: customerGid,
-    metafields: [{
-      namespace: "casino",
-      key: "plays",
-      type: "number_integer",
-      value: String(plays)
-    }]
+    metafields: [{ namespace: "casino", key: "plays", type: "number_integer", value: String(plays) }]
   };
   const d = await shopifyGraphQL(shop, accessToken, m, { input });
   const errs = d.customerUpdate?.userErrors || [];
   if (errs.length) throw new Error(JSON.stringify(errs));
 }
 
-// ======== OAuth (one-time) ========
-function verifyOAuthHmac(query) {
-  const { hmac, signature, ...rest } = query;
-  const provided = (hmac || signature || "").toString();
-  if (!provided || !CLIENT_SECRET) return false;
-  const keys = Object.keys(rest).sort();
-  const message = keys.map(k => `${k}=${Array.isArray(rest[k]) ? rest[k].join(",") : rest[k]}`).join("&");
-  const digest = crypto.createHmac("sha256", CLIENT_SECRET).update(message).digest("hex");
-  return safeEqual(digest, provided);
-}
-
-app.get("/auth/start", (req, res) => {
-  // alias pour compatibilité (certaines configs utilisent /auth/*)
-  req.url = req.originalUrl.replace("/auth/start","/oauth/start");
-  return res.redirect(req.url);
-});
-
-app.get("/oauth/start", (req, res) => {
-
-  const shop = (req.query.shop || "").toString().trim();
-  if (!shop) return res.status(400).send("missing shop");
-  if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
-  if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing CLIENT_ID/CLIENT_SECRET/APP_URL");
-  const state = crypto.randomBytes(16).toString("hex");
-  const redirectUri = `${APP_URL}/oauth/callback`;
-  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${CLIENT_ID}&scope=${encodeURIComponent(SCOPES)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
-  res.redirect(installUrl);
-});
-
-async function handleOAuthCallback(req, res) {
-try {
-    const shop = (req.query.shop || "").toString();
-    const code = (req.query.code || "").toString();
-    if (!shop || !code) return res.status(400).send("missing shop/code");
-    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
-    if (!verifyOAuthHmac(req.query)) return res.status(401).send("bad hmac");
-
-    const tokenResp = await fetch(`https://${shop}/admin/oauth/access_token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code })
-}
-
-app.get("/oauth/callback", async (req, res) => {
-  return handleOAuthCallback(req, res);
-});
-
-app.get("/auth/callback", async (req, res) => {
-  // alias compat
-  return handleOAuthCallback(req, res);
-});
-
-
-app.get("/admin/status", (req, res) => {
-  const shop = (req.query.shop || ALLOWED_SHOP || "").toString();
-  if (!shop) return res.send("Add ?shop=jouetmalins.myshopify.com");
-  res.json({ shop, hasToken: !!getToken(shop) });
-});
-
-// ======== App Proxy ========
-async function handleProxyStatus(req, res) {
-try {
-    if (!verifyAppProxy(req.query)) return res.status(401).json({ ok: false, error: "bad_signature"
-}
-
-async function handleProxyConsume(req, res) {
-try {
-    if (!verifyAppProxy(req.query)) return res.status(401).json({ ok: false, error: "bad_signature"
-}
-
-app.get("/webhooks/orders_paid", (req,res)=>res.status(200).send("ok")); 
-
+// IMPORTANT: webhook must read RAW body, so we declare it BEFORE express.json
+app.get("/webhooks/orders_paid", (req, res) => res.status(200).send("ok"));
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
   try {
-    const h = req.get("X-Shopify-Hmac-Sha256") || "";
-    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body||{}));
-    if (!verifyWebhook(raw, h)) return res.status(401).send("bad hmac");
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    const h = String(req.get("X-Shopify-Hmac-Sha256") || "");
+    const digest = crypto.createHmac("sha256", PROXY_SECRET).update(raw).digest("base64");
+    if (!safeEqual(digest, h)) return res.status(401).send("bad hmac");
 
-    const shop = (req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || "").toString();
+    const shop = String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || "");
     if (!shop) return res.status(200).send("no shop");
     if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(200).send("ok");
 
     const accessToken = getToken(shop);
     if (!accessToken) return res.status(200).send("not installed");
 
-    const order = JSON.parse(raw.toString("utf8"));
+    const order = JSON.parse(raw.toString("utf8") || "{}");
     const customerId = order?.customer?.id;
     if (!customerId) return res.status(200).send("no customer");
 
     let qty = 0;
-    // debug: log line items match
-
     for (const li of (order.line_items || [])) {
-      if (String(li.variant_id) === String(PLAY_VARIANT_ID)) qty += (li.quantity || 0);
+      if (String(li.variant_id) === PLAY_VARIANT_ID) qty += (li.quantity || 0);
     }
     if (qty <= 0) return res.status(200).send("no plays");
 
@@ -206,24 +177,61 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
     await setCustomerPlays(shop, accessToken, customerGid, plays + qty);
 
     return res.status(200).send("ok");
-  } catch (e) {
+  } catch {
     return res.status(200).send("ok");
   }
 });
 
-app.get("/apps/casino/status", async (req, res) => handleProxyStatus(req, res));
-app.post("/apps/casino/consume", async (req, res) => handleProxyConsume(req, res));
-
-// Compat si ton App Proxy URL pointe vers /proxy/casino (comme dans ta config)
-app.get("/proxy/casino/status", async (req, res) => handleProxyStatus(req, res));
-app.post("/proxy/casino/consume", async (req, res) => handleProxyConsume(req, res));
-
-
-// ======== Webhook Order paid ========
-
-// JSON parsing for non-webhook routes
+// JSON parsing for proxy endpoints
 app.use(express.json());
 
-app.get("/health", (req,res)=>res.status(200).json({ok:true}));
-app.get("/", (req, res) => res.status(200).send("ok"));
+async function handleProxyStatus(req, res) {
+  try {
+    if (!verifyAppProxy(req.query)) return res.status(401).json({ ok: false, error: "bad_signature" });
+    const shop = String(req.query.shop || "");
+    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).json({ ok: false, error: "shop_not_allowed" });
+
+    const accessToken = getToken(shop);
+    if (!accessToken) return res.json({ ok: false, error: "not_installed", plays: 0 });
+
+    const cid = req.query.logged_in_customer_id;
+    if (!cid) return res.json({ ok: true, plays: 0, loggedIn: false });
+
+    const customerGid = `gid://shopify/Customer/${cid}`;
+    const plays = await getCustomerPlays(shop, accessToken, customerGid);
+    return res.json({ ok: true, plays, loggedIn: true });
+  } catch {
+    return res.status(500).json({ ok: false, error: "status_failed" });
+  }
+}
+
+async function handleProxyConsume(req, res) {
+  try {
+    if (!verifyAppProxy(req.query)) return res.status(401).json({ ok: false, error: "bad_signature" });
+    const shop = String(req.query.shop || "");
+    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).json({ ok: false, error: "shop_not_allowed" });
+
+    const accessToken = getToken(shop);
+    if (!accessToken) return res.json({ ok: false, error: "not_installed" });
+
+    const cid = req.query.logged_in_customer_id;
+    if (!cid) return res.status(401).json({ ok: false, error: "not_logged_in" });
+
+    const customerGid = `gid://shopify/Customer/${cid}`;
+    const plays = await getCustomerPlays(shop, accessToken, customerGid);
+    if (plays <= 0) return res.json({ ok: false, error: "no_plays" });
+
+    await setCustomerPlays(shop, accessToken, customerGid, plays - 1);
+    return res.json({ ok: true, plays: plays - 1 });
+  } catch {
+    return res.status(500).json({ ok: false, error: "consume_failed" });
+  }
+}
+
+// Both proxy paths supported
+app.get("/apps/casino/status", handleProxyStatus);
+app.post("/apps/casino/consume", handleProxyConsume);
+app.get("/proxy/casino/status", handleProxyStatus);
+app.post("/proxy/casino/consume", handleProxyConsume);
+
 app.listen(PORT, () => console.log("casino-backend on", PORT));

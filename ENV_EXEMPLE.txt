@@ -1,7 +1,7 @@
-CLIENT_ID=5e6a9b37b52f445c2917c6cf7d52cb61
-CLIENT_SECRET=ton_secret_ici
-PROXY_SECRET=ton_secret_ici
-APP_URL=https://tonservice.onrender.com
 ALLOWED_SHOP=jouetmalins.myshopify.com
+APP_URL=https://casino-jouetmalins.onrender.com
+CLIENT_ID=5e6a9b37b52f445c2917c6cf7d52cb61
+CLIENT_SECRET=shpss_XXXXXXXXXXXX
+PROXY_SECRET=shpss_XXXXXXXXXXXX
 PLAY_VARIANT_ID=52772073636183
-SCOPES=read_customers,write_customers,read_orders,write_orders
+SCOPES=read_customers,write_customers,read_orders,write_orders,read_products
