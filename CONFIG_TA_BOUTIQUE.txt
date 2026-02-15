@@ -1,0 +1,4 @@
+Tes réglages actuels (d'après ce que tu as envoyé) :
+- Redirect URL : https://casino-jouetmalins.onrender.com/auth/callback
+- App Proxy URL : https://casino-jouetmalins.onrender.com/proxy/casino
+=> Ce ZIP est compatible avec ces 2 chemins.
