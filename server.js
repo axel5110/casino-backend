@@ -21,8 +21,6 @@ const SCOPES = process.env.SCOPES || "read_customers,write_customers,read_orders
 const APP_URL = process.env.APP_URL; // ex: https://tonservice.onrender.com
 const ALLOWED_SHOP = process.env.ALLOWED_SHOP || ""; // ex: jouetmalins.myshopify.com
 
-app.use(express.json());
-
 const TOKENS_FILE = path.join(__dirname, "tokens.json");
 
 function loadTokens() {
@@ -176,19 +174,10 @@ try {
     if (!verifyAppProxy(req.query)) return res.status(401).json({ ok: false, error: "bad_signature"
 }
 
-app.get("/apps/casino/status", async (req, res) => handleProxyStatus(req, res));
-app.post("/apps/casino/consume", async (req, res) => handleProxyConsume(req, res));
-
-// Compat si ton App Proxy URL pointe vers /proxy/casino (comme dans ta config)
-app.get("/proxy/casino/status", async (req, res) => handleProxyStatus(req, res));
-app.post("/proxy/casino/consume", async (req, res) => handleProxyConsume(req, res));
-
-
-// ======== Webhook Order paid ========
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
   try {
-    const raw = req.body;
     const h = req.get("X-Shopify-Hmac-Sha256") || "";
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body||{}));
     if (!verifyWebhook(raw, h)) return res.status(401).send("bad hmac");
 
     const shop = (req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || "").toString();
@@ -203,6 +192,8 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
     if (!customerId) return res.status(200).send("no customer");
 
     let qty = 0;
+    // debug: log line items match
+
     for (const li of (order.line_items || [])) {
       if (String(li.variant_id) === String(PLAY_VARIANT_ID)) qty += (li.quantity || 0);
     }
@@ -217,6 +208,19 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
     return res.status(200).send("ok");
   }
 });
+
+app.get("/apps/casino/status", async (req, res) => handleProxyStatus(req, res));
+app.post("/apps/casino/consume", async (req, res) => handleProxyConsume(req, res));
+
+// Compat si ton App Proxy URL pointe vers /proxy/casino (comme dans ta config)
+app.get("/proxy/casino/status", async (req, res) => handleProxyStatus(req, res));
+app.post("/proxy/casino/consume", async (req, res) => handleProxyConsume(req, res));
+
+
+// ======== Webhook Order paid ========
+
+// JSON parsing for non-webhook routes
+app.use(express.json());
 
 app.get("/", (req, res) => res.send("ok"));
 app.listen(PORT, () => console.log("casino-backend on", PORT));

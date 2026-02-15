@@ -1,0 +1,9 @@
+Si les parties ne se créditent pas après paiement :
+1) Vérifie que OAuth est OK : /admin/status?shop=jouetmalins.myshopify.com -> hasToken:true
+2) Vérifie que le webhook est bien "Orders paid" et URL exacte:
+   https://casino-jouetmalins.onrender.com/webhooks/orders_paid
+3) Dans Shopify Admin -> Commandes -> ouvre la commande -> vérifie que le variant acheté est bien 52772073636183
+4) Dans Render -> Logs : tu dois voir un hit sur /webhooks/orders_paid au moment du paiement.
+
+Fix technique inclus dans ce ZIP :
+- /webhooks/orders_paid utilise express.raw AVANT express.json (sinon Shopify HMAC échoue).
