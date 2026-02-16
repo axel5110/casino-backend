@@ -18,7 +18,8 @@ const PROXY_SECRET = process.env.PROXY_SECRET || CLIENT_SECRET; // HMAC (App Pro
 const APP_URL_RAW = process.env.APP_URL || "";
 const APP_URL = normalizeBaseUrl(APP_URL_RAW);
                // https://casino-jouetmalins.onrender.com
-const ALLOWED_SHOP = process.env.ALLOWED_SHOP || "";     // jouetmalins.myshopify.com
+const ALLOWED_SHOP_RAW = process.env.ALLOWED_SHOP || "";
+const ALLOWED_SHOP = String(ALLOWED_SHOP_RAW).trim().toLowerCase();     // ex: jouetmalins.myshopify.com
 const SCOPES = process.env.SCOPES || "read_customers,write_customers,read_orders,write_orders";
 const PLAY_VARIANT_ID = String(process.env.PLAY_VARIANT_ID || "52772073636183");
 
@@ -29,6 +30,8 @@ function normalizeBaseUrl(url){
   if(!u) return "";
   return u.endsWith("/") ? u.slice(0,-1) : u;
 }
+
+function normalizeShop(shop){ return String(shop||"").trim().toLowerCase(); }
 
 
 function loadTokens() {
@@ -54,8 +57,9 @@ function safeEqual(a, b) {
 // ===== Health / Debug =====
 app.get("/", (req, res) => res.status(200).send("ok"));
 app.get("/health", (req, res) => res.status(200).json({ ok: true }));
+app.get("/debug/env", (req,res)=>res.status(200).json({ APP_URL_RAW, APP_URL, ALLOWED_SHOP_RAW, ALLOWED_SHOP, SCOPES, PLAY_VARIANT_ID }));
 app.get("/admin/status", (req, res) => {
-  const shop = String(req.query.shop || ALLOWED_SHOP || "");
+  const shop = normalizeShop(req.query.shop || ALLOWED_SHOP || "");
   if (!shop) return res.status(400).json({ ok: false, error: "missing_shop" });
   return res.json({ ok: true, shop, hasToken: !!getToken(shop) });
 });
@@ -85,9 +89,9 @@ app.get("/oauth/debug", (req, res) => {
 });
 
 app.get("/oauth/start", (req, res) => {
-  const shop = String(req.query.shop || "").trim();
+  const shop = normalizeShop(req.query.shop || "");
   if (!shop) return res.status(400).send("missing shop");
-  if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
+  if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send(`shop not allowed (got="${shop}" allowed="${ALLOWED_SHOP}")`);
   if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing env CLIENT_ID/CLIENT_SECRET/APP_URL (check APP_URL without trailing slash)");
 
   const state = crypto.randomBytes(16).toString("hex");
@@ -98,10 +102,10 @@ app.get("/oauth/start", (req, res) => {
 
 async function handleOAuthCallback(req, res) {
   try {
-    const shop = String(req.query.shop || "");
+    const shop = normalizeShop(req.query.shop || "");
     const code = String(req.query.code || "");
     if (!shop || !code) return res.status(400).send("missing shop/code");
-    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
+    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send(`shop not allowed (got="${shop}" allowed="${ALLOWED_SHOP}")`);
     if (!verifyOAuthHmac(req.query)) return res.status(401).send("bad hmac");
 
     const tokenResp = await fetch(`https://${shop}/admin/oauth/access_token`, {
