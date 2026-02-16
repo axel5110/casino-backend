@@ -167,7 +167,22 @@ async function setCustomerPlays(shop, accessToken, customerGid, plays) {
   if (errs.length) throw new Error(JSON.stringify(errs));
 }
 
+async function findCustomerIdByEmail(shop, accessToken, email) {
+  const q = `query($query:String!) {
+    customers(first: 1, query: $query) { edges { node { id } } }
+  }`;
+  const query = `email:${email}`;
+  const d = await shopifyGraphQL(shop, accessToken, q, { query });
+  const edge = d.customers?.edges?.[0];
+  const gid = edge?.node?.id || null;
+  return gid;
+}
+
+
+let LAST_WEBHOOK = { at: null, shop: null, ok: null, note: null, qty: 0, email: null, customerId: null };
+
 // IMPORTANT: webhook must read RAW body, so we declare it BEFORE express.json
+app.get("/debug/lastwebhook", (req,res)=>res.status(200).json(LAST_WEBHOOK));
 app.get("/webhooks/orders_paid", (req, res) => res.status(200).send("ok"));
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
   try {
@@ -184,21 +199,36 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
     if (!accessToken) return res.status(200).send("not installed");
 
     const order = JSON.parse(raw.toString("utf8") || "{}");
-    const customerId = order?.customer?.id;
-    if (!customerId) return res.status(200).send("no customer");
+    const customerId = order?.customer?.id || null;
+    const email = order?.email || order?.customer?.email || null;
 
     let qty = 0;
     for (const li of (order.line_items || [])) {
       if (String(li.variant_id) === PLAY_VARIANT_ID) qty += (li.quantity || 0);
     }
-    if (qty <= 0) return res.status(200).send("no plays");
+    if (qty <= 0) {
+      LAST_WEBHOOK = { at: new Date().toISOString(), shop, ok: false, note: "no_matching_variant", qty: 0, email, customerId };
+      return res.status(200).send("no plays");
+    }
 
-    const customerGid = `gid://shopify/Customer/${customerId}`;
+    let customerGid = customerId ? `gid://shopify/Customer/${customerId}` : null;
+    if (!customerGid && email) {
+      customerGid = await findCustomerIdByEmail(shop, accessToken, email);
+    }
+    if (!customerGid) {
+      LAST_WEBHOOK = { at: new Date().toISOString(), shop, ok: false, note: "no_customer_id_or_email_match", qty, email, customerId };
+      return res.status(200).send("no customer");
+    }
+
     const plays = await getCustomerPlays(shop, accessToken, customerGid);
     await setCustomerPlays(shop, accessToken, customerGid, plays + qty);
+    LAST_WEBHOOK = { at: new Date().toISOString(), shop, ok: true, note: "credited", qty, email, customerId };
 
     return res.status(200).send("ok");
   } catch {
+    try {
+      LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || ""), ok: false, note: "exception", qty: 0, email: null, customerId: null };
+    } catch {}
     return res.status(200).send("ok");
   }
 });
