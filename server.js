@@ -15,12 +15,21 @@ const PORT = process.env.PORT || 3000;
 const CLIENT_ID = process.env.CLIENT_ID || "";           // Dev Dashboard "ID client"
 const CLIENT_SECRET = process.env.CLIENT_SECRET || "";   // Dev Dashboard "Secret"
 const PROXY_SECRET = process.env.PROXY_SECRET || CLIENT_SECRET; // HMAC (App Proxy + Webhooks)
-const APP_URL = process.env.APP_URL || "";               // https://casino-jouetmalins.onrender.com
+const APP_URL_RAW = process.env.APP_URL || "";
+const APP_URL = normalizeBaseUrl(APP_URL_RAW);
+               // https://casino-jouetmalins.onrender.com
 const ALLOWED_SHOP = process.env.ALLOWED_SHOP || "";     // jouetmalins.myshopify.com
 const SCOPES = process.env.SCOPES || "read_customers,write_customers,read_orders,write_orders";
 const PLAY_VARIANT_ID = String(process.env.PLAY_VARIANT_ID || "52772073636183");
 
 const TOKENS_FILE = path.join(__dirname, "tokens.json");
+
+function normalizeBaseUrl(url){
+  const u = String(url || "").trim();
+  if(!u) return "";
+  return u.endsWith("/") ? u.slice(0,-1) : u;
+}
+
 
 function loadTokens() {
   try { return JSON.parse(fs.readFileSync(TOKENS_FILE, "utf8")); } catch { return {}; }
@@ -63,14 +72,26 @@ function verifyOAuthHmac(query) {
   return safeEqual(digest, provided);
 }
 
+
+app.get("/oauth/debug", (req, res) => {
+  const redirectUri = `${APP_URL}/auth/callback`;
+  return res.json({
+    ok: true,
+    APP_URL_RAW,
+    APP_URL,
+    redirectUri,
+    note: "La redirectUri doit être whitelistée dans l'app (Dev Dashboard) exactement."
+  });
+});
+
 app.get("/oauth/start", (req, res) => {
   const shop = String(req.query.shop || "").trim();
   if (!shop) return res.status(400).send("missing shop");
   if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send("shop not allowed");
-  if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing env CLIENT_ID/CLIENT_SECRET/APP_URL");
+  if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing env CLIENT_ID/CLIENT_SECRET/APP_URL (check APP_URL without trailing slash)");
 
   const state = crypto.randomBytes(16).toString("hex");
-  const redirectUri = `${APP_URL}/oauth/callback`;
+  const redirectUri = `${APP_URL}/auth/callback`;
   const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${CLIENT_ID}&scope=${encodeURIComponent(SCOPES)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
   return res.redirect(installUrl);
 });
