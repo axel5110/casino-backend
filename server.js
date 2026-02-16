@@ -185,14 +185,19 @@ let LAST_WEBHOOK = { at: null, shop: null, ok: null, note: null, qty: 0, email: 
 app.get("/debug/lastwebhook", (req,res)=>res.status(200).json(LAST_WEBHOOK));
 app.get("/webhooks/orders_paid", (req, res) => res.status(200).send("ok"));
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
+  // Trace every webhook hit (even if HMAC fails)
+  LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok: false, note: "hit", qty: 0, email: null, customerId: null };
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
     const h = String(req.get("X-Shopify-Hmac-Sha256") || "");
     const digest = crypto.createHmac("sha256", PROXY_SECRET).update(raw).digest("base64");
-    if (!safeEqual(digest, h)) return res.status(401).send("bad hmac");
+    if (!safeEqual(digest, h)) {
+      LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain")||ALLOWED_SHOP||""), ok: false, note: "bad_hmac", qty: 0, email: null, customerId: null };
+      return res.status(401).send("bad hmac");
+    }
 
     const shop = String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || "");
-    if (!shop) return res.status(200).send("no shop");
+    if (!shop) { LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok:false, note:"no_shop_header", qty:0, email:null, customerId:null }; return res.status(200).send("no shop"); }
     if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(200).send("ok");
 
     const accessToken = getToken(shop);
