@@ -88,10 +88,14 @@ app.get("/oauth/debug", (req, res) => {
   });
 });
 
+app.get("/oauth/start-jouetmalins", (req,res)=>res.redirect("/oauth/start"));
+
 app.get("/oauth/start", (req, res) => {
-  const shop = normalizeShop(req.query.shop || "");
-  if (!shop) return res.status(400).send("missing shop");
-  if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send(`shop not allowed (got="${shop}" allowed="${ALLOWED_SHOP}")`);
+  let shop = normalizeShop(req.query.shop || "");
+  // Si ALLOWED_SHOP est défini, on force toujours ce shop (évite les erreurs de boutique)
+  if (ALLOWED_SHOP) shop = ALLOWED_SHOP;
+  if (!shop) return res.status(400).send("missing shop (ALLOWED_SHOP vide)");
+  /* shop forcé via ALLOWED_SHOP */
   if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing env CLIENT_ID/CLIENT_SECRET/APP_URL (check APP_URL without trailing slash)");
 
   const state = crypto.randomBytes(16).toString("hex");
@@ -102,10 +106,12 @@ app.get("/oauth/start", (req, res) => {
 
 async function handleOAuthCallback(req, res) {
   try {
-    const shop = normalizeShop(req.query.shop || "");
+    let shop = normalizeShop(req.query.shop || "");
+  // Si ALLOWED_SHOP est défini, on force toujours ce shop (évite les erreurs de boutique)
+  if (ALLOWED_SHOP) shop = ALLOWED_SHOP;
     const code = String(req.query.code || "");
     if (!shop || !code) return res.status(400).send("missing shop/code");
-    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send(`shop not allowed (got="${shop}" allowed="${ALLOWED_SHOP}")`);
+    /* shop forcé via ALLOWED_SHOP */
     if (!verifyOAuthHmac(req.query)) return res.status(401).send("bad hmac");
 
     const tokenResp = await fetch(`https://${shop}/admin/oauth/access_token`, {
