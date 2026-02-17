@@ -18,3 +18,8 @@ https://casino-jouetmalins.onrender.com/oauth/start?shop=jouetmalins.myshopify.c
 Tests:
 /health
 /admin/status?shop=jouetmalins.myshopify.com
+
+
+DEBUG:
+- Ouvre /oauth/debug pour voir la redirectUri exacte envoyée à Shopify.
+- APP_URL doit être SANS slash final.

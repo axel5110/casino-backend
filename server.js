@@ -88,14 +88,10 @@ app.get("/oauth/debug", (req, res) => {
   });
 });
 
-app.get("/oauth/start-jouetmalins", (req,res)=>res.redirect("/oauth/start"));
-
 app.get("/oauth/start", (req, res) => {
-  let shop = normalizeShop(req.query.shop || "");
-  // Si ALLOWED_SHOP est défini, on force toujours ce shop (évite les erreurs de boutique)
-  if (ALLOWED_SHOP) shop = ALLOWED_SHOP;
-  if (!shop) return res.status(400).send("missing shop (ALLOWED_SHOP vide)");
-  /* shop forcé via ALLOWED_SHOP */
+  const shop = normalizeShop(req.query.shop || "");
+  if (!shop) return res.status(400).send("missing shop");
+  if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send(`shop not allowed (got="${shop}" allowed="${ALLOWED_SHOP}")`);
   if (!CLIENT_ID || !CLIENT_SECRET || !APP_URL) return res.status(500).send("missing env CLIENT_ID/CLIENT_SECRET/APP_URL (check APP_URL without trailing slash)");
 
   const state = crypto.randomBytes(16).toString("hex");
@@ -106,12 +102,10 @@ app.get("/oauth/start", (req, res) => {
 
 async function handleOAuthCallback(req, res) {
   try {
-    let shop = normalizeShop(req.query.shop || "");
-  // Si ALLOWED_SHOP est défini, on force toujours ce shop (évite les erreurs de boutique)
-  if (ALLOWED_SHOP) shop = ALLOWED_SHOP;
+    const shop = normalizeShop(req.query.shop || "");
     const code = String(req.query.code || "");
     if (!shop || !code) return res.status(400).send("missing shop/code");
-    /* shop forcé via ALLOWED_SHOP */
+    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(403).send(`shop not allowed (got="${shop}" allowed="${ALLOWED_SHOP}")`);
     if (!verifyOAuthHmac(req.query)) return res.status(401).send("bad hmac");
 
     const tokenResp = await fetch(`https://${shop}/admin/oauth/access_token`, {
@@ -195,6 +189,10 @@ let LAST_WEBHOOK = { at: null, shop: null, ok: null, note: null, qty: 0, email: 
 app.get("/debug/lastwebhook", (req,res)=>res.status(200).json(LAST_WEBHOOK));
 app.get("/webhooks/orders_paid", (req, res) => res.status(200).send("ok"));
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
+  if (DISABLE_HMAC) {
+    LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain")||""), ok: false, note: "hmac_skipped_hit", qty: 0, email: null, customerId: null };
+  }
+
   // Trace every webhook hit (even if HMAC fails)
   LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok: false, note: "hit", qty: 0, email: null, customerId: null };
   try {
@@ -202,8 +200,11 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
     const h = String(req.get("X-Shopify-Hmac-Sha256") || "");
     const digest = crypto.createHmac("sha256", PROXY_SECRET).update(raw).digest("base64");
     if (!safeEqual(digest, h)) {
-      LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain")||ALLOWED_SHOP||""), ok: false, note: "bad_hmac", qty: 0, email: null, customerId: null };
-      return res.status(401).send("bad hmac");
+      if (!DISABLE_HMAC) {
+        LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain")||ALLOWED_SHOP||""), ok: false, note: "bad_hmac", qty: 0, email: null, customerId: null };
+        return res.status(401).send("bad hmac");
+      }
+      // EXPRESS MODE: on ignore le HMAC (TEST). Garder ALLOWED_SHOP strict.
     }
 
     const shop = String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || "");
