@@ -208,7 +208,16 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
       // EXPRESS MODE: on ignore le HMAC (TEST). Garder ALLOWED_SHOP strict.
     }
 
-    const shop = String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || "");
+    
+// Resolve shop from headers (case-insensitive) or query param; attach debug info
+const headerShop1 = req.get("X-Shopify-Shop-Domain") || req.get("x-shopify-shop-domain") || null;
+const headerShop2 = (req.headers && (req.headers['x-shopify-shop-domain'] || req.headers['X-Shopify-Shop-Domain'])) || null;
+const queryShop = req.query && req.query.shop ? String(req.query.shop) : null;
+const headersShopDomain = headerShop1 || headerShop2 || null;
+const shopResolved = normalizeShop(headersShopDomain || queryShop || ALLOWED_SHOP || "");
+const shop = shopResolved;
+LAST_WEBHOOK = Object.assign({}, LAST_WEBHOOK, { headersShopDomain, shopResolved });
+
     if (!shop) { LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok:false, note:"no_shop_header", qty:0, email:null, customerId:null }; return res.status(200).send("no shop"); }
     if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(200).send("ok");
 
