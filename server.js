@@ -15,6 +15,7 @@ const PORT = process.env.PORT || 3000;
 const CLIENT_ID = process.env.CLIENT_ID || "";           // Dev Dashboard "ID client"
 const CLIENT_SECRET = process.env.CLIENT_SECRET || "";   // Dev Dashboard "Secret"
 const PROXY_SECRET = process.env.PROXY_SECRET || CLIENT_SECRET; // HMAC (App Proxy + Webhooks)
+const DISABLE_HMAC = String(process.env.DISABLE_HMAC || "").toLowerCase() === "true";
 const APP_URL_RAW = process.env.APP_URL || "";
 const APP_URL = normalizeBaseUrl(APP_URL_RAW);
                // https://casino-jouetmalins.onrender.com
