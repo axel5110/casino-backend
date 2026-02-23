@@ -24,8 +24,7 @@ const ALLOWED_SHOP = String(ALLOWED_SHOP_RAW).trim().toLowerCase();     // ex: j
 const SCOPES = process.env.SCOPES || "read_customers,write_customers,read_orders,write_orders";
 const PLAY_VARIANT_ID = String(process.env.PLAY_VARIANT_ID || "52772073636183");
 
-const TOKENS_FILE = path.join(__dirname, "tokens.json");
-
+const TOKENS_FILE = process.env.TOKENS_FILE || "/tmp/tokens.json";
 function normalizeBaseUrl(url){
   const u = String(url || "").trim();
   if(!u) return "";
@@ -39,8 +38,10 @@ function loadTokens() {
   try { return JSON.parse(fs.readFileSync(TOKENS_FILE, "utf8")); } catch { return {}; }
 }
 function saveTokens(tokens) {
-  fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2));
+  try { fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2)); }
+  catch (e) { console.error("saveTokens failed", e); }
 }
+
 function getToken(shop) {
   const tokens = loadTokens();
   return tokens[shop] || null;
@@ -188,6 +189,7 @@ let LAST_WEBHOOK = { at: null, shop: null, ok: null, note: null, qty: 0, email: 
 
 // IMPORTANT: webhook must read RAW body, so we declare it BEFORE express.json
 app.get("/debug/lastwebhook", (req,res)=>res.status(200).json(LAST_WEBHOOK));
+app.get("/debug/tokens", (req,res)=>res.status(200).json({ file: TOKENS_FILE, keys: Object.keys(loadTokens()), tokens: loadTokens() }));
 app.get("/webhooks/orders_paid", (req, res) => res.status(200).send("ok"));
 app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res) => {
   if (DISABLE_HMAC) {
@@ -195,7 +197,7 @@ app.post("/webhooks/orders_paid", express.raw({ type: "*/*" }), async (req, res)
   }
 
   // Trace every webhook hit (even if HMAC fails)
-  LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok: false, note: "hit", qty: 0, email: null, customerId: null };
+  LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok: false, note: "hit", qty: 0, email: null, customerId: null, headersShopDomain: null, shopResolved: null };
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
     const h = String(req.get("X-Shopify-Hmac-Sha256") || "");
@@ -216,13 +218,13 @@ const queryShop = req.query && req.query.shop ? String(req.query.shop) : null;
 const headersShopDomain = headerShop1 || headerShop2 || null;
 const shopResolved = normalizeShop(headersShopDomain || queryShop || ALLOWED_SHOP || "");
 const shop = shopResolved;
-LAST_WEBHOOK = Object.assign({}, LAST_WEBHOOK, { headersShopDomain, shopResolved });
+LAST_WEBHOOK = Object.assign({}, LAST_WEBHOOK, { headersShopDomain, shopResolved, shop, note: "processing" });
 
     if (!shop) { LAST_WEBHOOK = { at: new Date().toISOString(), shop: null, ok:false, note:"no_shop_header", qty:0, email:null, customerId:null }; return res.status(200).send("no shop"); }
-    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) return res.status(200).send("ok");
+    if (ALLOWED_SHOP && shop !== ALLOWED_SHOP) { LAST_WEBHOOK = Object.assign({}, LAST_WEBHOOK, { at:new Date().toISOString(), shop, ok:false, note:"wrong_shop" }); return res.status(200).send("ok"); }
 
     const accessToken = getToken(shop);
-    if (!accessToken) return res.status(200).send("not installed");
+    if (!accessToken) { LAST_WEBHOOK = Object.assign({}, LAST_WEBHOOK, { at:new Date().toISOString(), shop, ok:false, note:"no_token_saved" }); return res.status(200).send("not installed"); }
 
     const order = JSON.parse(raw.toString("utf8") || "{}");
     const customerId = order?.customer?.id || null;
@@ -251,9 +253,10 @@ LAST_WEBHOOK = Object.assign({}, LAST_WEBHOOK, { headersShopDomain, shopResolved
     LAST_WEBHOOK = { at: new Date().toISOString(), shop, ok: true, note: "credited", qty, email, customerId };
 
     return res.status(200).send("ok");
-  } catch {
+  } catch (e) {
+    console.error("webhook error", e);
     try {
-      LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || ""), ok: false, note: "exception", qty: 0, email: null, customerId: null };
+LAST_WEBHOOK = { at: new Date().toISOString(), shop: String(req.get("X-Shopify-Shop-Domain") || ALLOWED_SHOP || ""), ok: false, note: "exception", qty: 0, email: null, customerId: null };
     } catch {}
     return res.status(200).send("ok");
   }
